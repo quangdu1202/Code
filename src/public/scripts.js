@@ -59,7 +59,12 @@ function initSankakuTools() {
         currentSearchTag: null,
         searchTagSuggestions: [],
         searchTagSuggestionsFetched: false,
-        selectedTagToShowPosts: { fetchedPosts: [] },
+        postsPerPage: 20, // Number of posts per page (default 20)
+        currentPage: 1, // Track the current page
+        totalPages: 1, // Track the total number of pages
+        selectedTagToShowPosts: { fetchedPosts: [] }, // Selected tag with posts
+        isFetchingPosts: false, // Track if posts are being fetched
+        isShowingPosts: false, // Track if posts are being shown
 
         dispatchMessage(type, message, timeout) {
             window.dispatchMessages([{ type: type, text: message }], timeout);
@@ -1023,98 +1028,151 @@ function initSankakuTools() {
                 return (size / 1024).toFixed(1) + ' KB';
             }
             return size + ' bytes';
-        },        
+        },
 
+        // Computed property for paginated posts
+        get paginatedPosts() {
+            const start = (this.currentPage - 1) * this.postsPerPage;
+            const end = start + this.postsPerPage * 1; // Make sure the end is a number
+            // console.log(start, end);
+            return this.selectedTagToShowPosts.fetchedPosts.slice(start, end);
+        },
+
+        // Calculate total pages based on postsPerPage
+        updateTotalPages() {
+            this.totalPages = Math.ceil(this.selectedTagToShowPosts.fetchedPosts.length / this.postsPerPage);
+            this.currentPage = 1; // Reset to first page when posts per page changes
+        },
+
+        // Go to next page
+        nextPage() {
+            if (this.currentPage < this.totalPages) {
+                this.currentPage++;
+            }
+        },
+
+        // Go to previous page
+        prevPage() {
+            if (this.currentPage > 1) {
+                this.currentPage--;
+            }
+        },
+
+        // Method to jump to the selected page
+        jumpToPage($el) {
+            // Make sure the value is not empty
+            if (!$el.value) {
+                return;
+            }
+
+            // Make sure the entered value is within the valid range
+            if ($el.value < 1) {
+                this.currentPage = 1;
+            } else if ($el.value > this.totalPages) {
+                this.currentPage = this.totalPages;
+            }
+        },
+
+        // Method to validate input when input field loses focus
+        validatePage($el) {
+            if ($el.value < 1) {
+                this.currentPage = 1;
+            } else if ($el.value > this.totalPages) {
+                this.currentPage = this.totalPages;
+            }
+        },
+
+        // Fetch posts of a specific page
         async fetchPostsOfPage(tag, limit, page) {
-            return fetch(`${this.TAG_POSTS_URL}&tags=${tag.tagName}&limit=${limit}&page=${page}`, {
-                method: 'GET',
-                headers: {
-                    'Authorization': `Bearer ${this.token.access_token}`,
-                    'Content-Type': 'application/json'
-                },
-            })
-                .then(response => {
-                    if (response.ok) {
-                        return response.json();
-                    } else {
-                        throw new Error('Token expired or something went wrong!');
-                    }
-                })
-                .then(data => {
-                    if (data.length > 0) {
-                        // Extract relevant post data
-                        return data.map(post => this.extractPostData(post));
-                    } else {
-                        this.dispatchMessage("warning", "No data found for this tag!", 5000);
-                        return [];
-                    }
-                })
-                .catch(error => {
-                    console.error('Error fetching page data:', error);
-                    this.dispatchMessage("warning", error.message, 5000);
-                    return [];
+            const url = `${this.TAG_POSTS_URL}&tags=${tag.tagName}&limit=${limit}&page=${page}`;
+
+            try {
+                const response = await fetch(url, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${this.token.access_token}`,
+                        'Content-Type': 'application/json',
+                    },
                 });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    return data.map(post => this.extractPostData(post)); // Only extract relevant data
+                } else {
+                    throw new Error('Failed to fetch page data');
+                }
+            } catch (error) {
+                console.error('Error fetching page data:', error);
+                return [];
+            }
         },
 
         async fetchAllPostsOfTag(tag, limit = 20) {
             this.fetchTagWiki(tag); // Fetch tag data first
+            this.isShowingPosts = false;
 
             const postCount = tag.post_count || 0;
+
             // If no posts are available for the tag, exit early
             if (postCount === 0) {
                 this.dispatchMessage("warning", "No posts available for this tag!", 5000);
                 return;
             }
 
+            const lastPostFetchedTime = tag.lastPostFetchedTime || 0;
+            const needToFetch = lastPostFetchedTime === 0 || (new Date().getTime() - lastPostFetchedTime) > 3600000;
             const fetchedPostCount = tag.fetchedPostCount || 0;
-            // If all posts are already fetched, 
+
+            // If all posts are already fetched and no need to fetch again, exit early
             // Update the selected tag to show the fetched posts and exit early
-            if (fetchedPostCount === postCount) {
+            if (fetchedPostCount === postCount && !needToFetch) {
                 this.selectedTagToShowPosts = { ...tag };
+                this.updateTotalPages();
+                this.isShowingPosts = true;
                 return;
             }
 
-            console.log(`Fetching all posts for ${tag.name}`);
+            try {
+                this.isFetchingPosts = true; // Show loading state
+                const totalPages = Math.ceil(postCount / limit);
+                const fetchedPosts = [];
 
-            const totalPages = Math.ceil(postCount / limit);
-            const fetchedPosts = [];
+                console.log(`Fetching all posts for ${tag.tagName}`);
 
-            this.isLoading = true; // Show loading state
-
-            // Loop through all pages with a 3-second delay between each fetch
-            for (let i = 1; i <= totalPages; i++) {
-                try {
+                // Loop through all pages with a 3-second delay between each fetch
+                for (let i = 1; i <= totalPages; i++) {
                     const data = await this.fetchPostsOfPage(tag, limit, i);
                     fetchedPosts.push(...data);
 
+                    // Log and show success message for each fetched page
                     console.log(`Fetched page ${i} of ${totalPages}`);
                     this.dispatchMessage("success", `Fetched page ${i} of ${totalPages}`, 2000);
 
                     // Wait for 3 seconds before fetching the next page
                     await this.sleep(3000);
-                } catch (error) {
-                    console.error(`Error fetching page ${i}:`, error);
                 }
+
+                // Filter only "safe" posts
+                tag.fetchedPosts = fetchedPosts.filter(post => post.rating === 's');
+
+                // Store the number of fetched posts and update fetched time
+                tag.fetchedPostCount = fetchedPosts.length;
+                tag.lastPostFetchedTime = new Date().getTime();
+
+                // Once posts are fetched
+                this.selectedTagToShowPosts = { ...tag };
+                this.updateTotalPages();
+                this.updateLocalStorageForTags();
+
+                this.dispatchMessage("success", `${fetchedPosts.length} posts fetched for ${tag.tagName}`, 5000);
+                this.isShowingPosts = true; // Show the posts
+            } catch (error) {
+                console.error('Error fetching posts:', error);
+                this.dispatchMessage("warning", error.message, 5000);
+            } finally {
+                // Set loading state to false after all requests or an error
+                this.isFetchingPosts = false;
             }
-
-            // Store the posts to the tag object
-            tag.fetchedPosts = fetchedPosts.filter(post => post.rating === 's');
-
-            // Store the number of fetched posts
-            tag.fetchedPostCount = fetchedPosts.length;
-
-            // Store fetched time for the tag in milliseconds
-            tag.lastFetchedTime = new Date().getTime();
-
-            // Update the selected tag to show the fetched posts
-            this.selectedTagToShowPosts = { ...tag };
-
-            // Update local storage
-            this.updateLocalStorageForTags();
-
-            this.dispatchMessage("success", `${fetchedPosts.length} posts fetched for ${tag.name}`, 5000);
-
-            this.isLoading = false; // Remove loading state
         },
     };
 }
