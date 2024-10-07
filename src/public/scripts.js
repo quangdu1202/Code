@@ -26,7 +26,7 @@ function initSankakuTools() {
         TAG_WIKI_URL: "https://capi-v2.sankakucomplex.com/tag-and-wiki/name/",
         FOLLOWING_URL: "https://sankakuapi.com/users/followings?lang=en",
         TAG_SEARCH_AUTO_SUGGEST_CREATING_URL: "https://sankakuapi.com/tags/autosuggestCreating?lang=en&tag=",
-        TAG_POSTS_URL: "https://capi-v2.sankakucomplex.com/posts?lang=en",
+        POST_FOLLOW_URL: "https://sankakuapi.com/posts/",
         isLoading: false,
         loginData: {
             login: '',
@@ -45,6 +45,7 @@ function initSankakuTools() {
         },
         selectedFile: null,
         tags: [],
+        fetchedPostsData: [],
         lastFetchFollowingTagsTime: null,
         sortBy: '', // Current sorting field ('tagName' or 'following')
         sortDesc: false, // Track sorting direction
@@ -62,7 +63,7 @@ function initSankakuTools() {
         postsPerPage: 20, // Number of posts per page (default 20)
         currentPage: 1, // Track the current page
         totalPages: 1, // Track the total number of pages
-        selectedTagToShowPosts: { fetchedPosts: [] }, // Selected tag with posts
+        selectedTagToShowPosts: {}, // Selected tag with posts
         isFetchingPosts: false, // Track if posts are being fetched
         isShowingPosts: false, // Track if posts are being shown
 
@@ -110,14 +111,22 @@ function initSankakuTools() {
                 this.recentlyUnfollowedTags = JSON.parse(storedRecentlyUnfollowedTags);
             }
 
+            const storedPostsData = localStorage.getItem('fetchedPostsData');
+            if (storedPostsData) {
+                this.fetchedPostsData = JSON.parse(storedPostsData);
+            }
+
             this.filteredTags = this.tags
         },
 
         updateLocalStorageForTags() {
+            console.log('Updating fetchedPostsData: ', this.fetchedPostsData);
             // update all local storage values related to tags
             localStorage.setItem('localTags', JSON.stringify(this.tags));
             localStorage.setItem('lastFetchFollowingTagsTime', this.lastFetchFollowingTagsTime);
             localStorage.setItem('recentlyUnfollowedTags', JSON.stringify(this.recentlyUnfollowedTags));
+            localStorage.setItem('fetchedPostsData', JSON.stringify(this.fetchedPostsData));
+            console.log('Updated local storage for tags');
         },
 
         getToken() {
@@ -293,17 +302,17 @@ function initSankakuTools() {
             this.isLoading = false;
         },
 
-        fetchTagWiki(tag, fetchAll = false) {
-            // if (!fetchAll && tag.fetched === true) {
+        fetchTagWiki(tag, batchAction = false) {
+            // if (!batchAction && tag.fetched === true) {
             //     this.dispatchMessage("warning", "Tag already fetched!", 5000);
             //     return;
             // }
 
-            if (fetchAll && tag.fetched === true) {
+            if (batchAction && tag.fetched === true) {
                 return;
             }
 
-            if (!fetchAll) {
+            if (!batchAction) {
                 this.isLoading = true;
             }
 
@@ -313,12 +322,12 @@ function initSankakuTools() {
                 .then(response => {
                     if (response.ok) {
                         return response.json()
-                    } else if (!fetchAll) {
+                    } else if (!batchAction) {
                         throw new Error('Tag not found or something went wrong!');
                     }
                 })
                 .then(data => {
-                    if (!fetchAll && !data.tag && !data.wiki) {
+                    if (!batchAction && !data.tag && !data.wiki) {
                         this.dispatchMessage("warning", "Unknown error!", 5000);
                         return;
                     }
@@ -332,7 +341,7 @@ function initSankakuTools() {
                         tag.wiki = data.wiki; // Add wiki data to tag
                     }
 
-                    if (!fetchAll) {
+                    if (!batchAction) {
                         // Update local storage
                         this.updateLocalStorageForTags();
 
@@ -348,7 +357,7 @@ function initSankakuTools() {
                     // Update tag fetching status and tag id of both alpinejs and local storage
                     tag.fetched = null;
 
-                    if (!fetchAll) {
+                    if (!batchAction) {
                         // Update local storage
                         this.updateLocalStorageForTags();
 
@@ -413,13 +422,7 @@ function initSankakuTools() {
                         'Content-Type': 'application/json'
                     }
                 })
-                    .then(response => {
-                        if (response.ok) {
-                            return response.json()
-                        } else {
-                            throw new Error('Token expired or something went wrong!');
-                        }
-                    })
+                    .then((response) => response.json())
                     .then(data => {
                         if (data.tags) {
                             // for each tag in the response, check if it exists in this.tags and update following status, else add it fetch data
@@ -430,7 +433,7 @@ function initSankakuTools() {
                                 } else {
                                     const tag = { id: followingTag.id, tagName: followingTag.tagName, fetched: false, following: true };
                                     this.tags.unshift(tag); // Add the tag to tags
-                                    this.fetchTagWiki(tag); // Fetch data
+                                    this.fetchTagWiki(tag, true); // Fetch data
                                 }
                             });
 
@@ -445,19 +448,12 @@ function initSankakuTools() {
                         } else {
                             this.dispatchMessage("warning", "No data or unknown error!", 5000);
                         }
-
-                        this.isLoading = false;
                     })
-                    .catch(error => {
-                        console.error('Error:', error);
-                        this.dispatchMessage("warning", error.message, 5000);
-
-                        this.isLoading = false;
-                    });
             }).catch(error => {
                 console.error('Error in refreshing tags:', error);
                 this.dispatchMessage("warning", "Some tags could not be refreshed.", 5000);
-                this.isLoading = false; // Reset loading state
+            }).finally(() => {
+                this.isLoading = false;
             });
         },
 
@@ -1009,6 +1005,7 @@ function initSankakuTools() {
                 file_size: post.file_size,
                 file_type: post.file_type,
                 file_url: post.file_url,
+                is_favorited: post.is_favorited,
                 height: post.height,
                 id: post.id,
                 preview_url: post.preview_url,
@@ -1030,17 +1027,26 @@ function initSankakuTools() {
             return size + ' bytes';
         },
 
+        get postsToShow() {
+            const postsData = this.fetchedPostsData.find(data => data.tagName === this.selectedTagToShowPosts.tagName);
+            if (postsData) {
+                return postsData.fetchedPosts;
+            } else {
+                return [];
+            }
+        },
+
         // Computed property for paginated posts
         get paginatedPosts() {
             const start = (this.currentPage - 1) * this.postsPerPage;
             const end = start + this.postsPerPage * 1; // Make sure the end is a number
             // console.log(start, end);
-            return this.selectedTagToShowPosts.fetchedPosts.slice(start, end);
+            return this.postsToShow.slice(start, end);
         },
 
         // Calculate total pages based on postsPerPage
         updateTotalPages() {
-            this.totalPages = Math.ceil(this.selectedTagToShowPosts.fetchedPosts.length / this.postsPerPage);
+            this.totalPages = Math.ceil(this.postsToShow.length / this.postsPerPage);
             this.currentPage = 1; // Reset to first page when posts per page changes
         },
 
@@ -1068,17 +1074,21 @@ function initSankakuTools() {
             // Make sure the entered value is within the valid range
             if ($el.value < 1) {
                 this.currentPage = 1;
+                $el.value = 1;
             } else if ($el.value > this.totalPages) {
                 this.currentPage = this.totalPages;
+                $el.value = this.totalPages;
+            } else {
+                this.currentPage = $el.value;
             }
         },
 
         // Method to validate input when input field loses focus
         validatePage($el) {
             if ($el.value < 1) {
-                this.currentPage = 1;
+                $el.value = 1;
             } else if ($el.value > this.totalPages) {
-                this.currentPage = this.totalPages;
+                $el.value = this.totalPages;
             }
         },
 
@@ -1111,56 +1121,79 @@ function initSankakuTools() {
             this.fetchTagWiki(tag); // Fetch tag data first
             this.isShowingPosts = false;
 
-            const postCount = tag.post_count || 0;
+            const realPostCount = tag.post_count || 0;
 
             // If no posts are available for the tag, exit early
-            if (postCount === 0) {
+            if (realPostCount === 0) {
                 this.dispatchMessage("warning", "No posts available for this tag!", 5000);
                 return;
             }
 
-            const lastPostFetchedTime = tag.lastPostFetchedTime || 0;
-            const needToFetch = lastPostFetchedTime === 0 || (new Date().getTime() - lastPostFetchedTime) > 3600000;
-            const fetchedPostCount = tag.fetchedPostCount || 0;
+            let needToFetch = false;
+
+            const existingPostsDataIndex = this.fetchedPostsData.findIndex(data => data.tagName === tag.tagName);
+            const fetchedData = this.fetchedPostsData[existingPostsDataIndex] || { fetchedPosts: [], lastPostFetchedTime: 0, fetchedPostCount: 0, tagName: tag.tagName };
+
+            const fetchedPostCount = fetchedData.fetchedPostCount || 0;
+            const lastPostFetchedTime = fetchedData.lastPostFetchedTime || 0;
+
+            needToFetch = existingPostsDataIndex === -1 || fetchedPostCount !== realPostCount || (new Date().getTime() - lastPostFetchedTime) > 3600000;
 
             // If all posts are already fetched and no need to fetch again, exit early
-            // Update the selected tag to show the fetched posts and exit early
-            if (fetchedPostCount === postCount && !needToFetch) {
-                this.selectedTagToShowPosts = { ...tag };
+            if (!needToFetch) {
+                this.selectedTagToShowPosts = tag;
                 this.updateTotalPages();
                 this.isShowingPosts = true;
                 return;
             }
 
+            const totalPages = Math.ceil(realPostCount / limit);
+            const fetchedPages = Math.floor(fetchedPostCount / limit);
+            const remainingPages = totalPages - fetchedPages;
+            let fetchedPosts = [...fetchedData.fetchedPosts];
+
+            // Remove the extra posts if the fetched count is more than the total count to avoid duplicates when merge
+            fetchedPosts = fetchedPosts.slice(0, fetchedPages * limit - 1);
+
             try {
                 this.isFetchingPosts = true; // Show loading state
-                const totalPages = Math.ceil(postCount / limit);
-                const fetchedPosts = [];
 
                 console.log(`Fetching all posts for ${tag.tagName}`);
+                console.log(`Need to fetch ${remainingPages} pages`);
 
                 // Loop through all pages with a 3-second delay between each fetch
-                for (let i = 1; i <= totalPages; i++) {
+                for (let i = 1; i <= remainingPages; i++) {
                     const data = await this.fetchPostsOfPage(tag, limit, i);
                     fetchedPosts.push(...data);
 
                     // Log and show success message for each fetched page
-                    console.log(`Fetched page ${i} of ${totalPages}`);
-                    this.dispatchMessage("success", `Fetched page ${i} of ${totalPages}`, 2000);
+                    console.log(`Fetched page ${i} of ${remainingPages}`);
+                    this.dispatchMessage("success", `Fetched page ${i} of ${remainingPages}`, 2000);
 
                     // Wait for 3 seconds before fetching the next page
                     await this.sleep(3000);
                 }
 
                 // Filter only "safe" posts
-                tag.fetchedPosts = fetchedPosts.filter(post => post.rating === 's');
+                // tag.fetchedPosts = fetchedPosts.filter(post => post.rating === 's');
+
+                const lastPostFetchedTime = new Date().getTime();
+                const postsDataToUpdate = { fetchedPosts, fetchedPostCount: fetchedPosts.length, lastPostFetchedTime };
+
+                if (existingPostsDataIndex !== -1) {
+                    // Update the existing post
+                    this.fetchedPostsData[existingPostsDataIndex] = { ...this.fetchedPostsData[existingPostsDataIndex], ...postsDataToUpdate };
+                } else {
+                    // Add a new post
+                    this.fetchedPostsData.push({ tagName: tag.tagName, ...postsDataToUpdate });
+                }
 
                 // Store the number of fetched posts and update fetched time
-                tag.fetchedPostCount = fetchedPosts.length;
-                tag.lastPostFetchedTime = new Date().getTime();
+                this.tags = this.tags.map(t => t.tagName === tag.tagName ? { ...t, fetchedPostCount: fetchedPosts.length, lastPostFetchedTime } : t);
 
                 // Once posts are fetched
-                this.selectedTagToShowPosts = { ...tag };
+                this.selectedTagToShowPosts = tag;
+                this.postsToShow = fetchedPosts;
                 this.updateTotalPages();
                 this.updateLocalStorageForTags();
 
@@ -1172,7 +1205,40 @@ function initSankakuTools() {
             } finally {
                 // Set loading state to false after all requests or an error
                 this.isFetchingPosts = false;
+                this.isLoading = false;
             }
+        },
+
+        handleFollowPost(post) {
+            const { method, successMessage, errorMessage } = post.is_favorited
+                ? { method: 'DELETE', successMessage: 'Post unfollowed!', errorMessage: 'Error unfollowing post!' }
+                : { method: 'POST', successMessage: 'Post followed!', errorMessage: 'Error following post!' };
+
+            this.isLoading = true;
+            fetch(this.POST_FOLLOW_URL + post.id + '/favorite?lang=en', {
+                method: method,
+                headers: {
+                    'Authorization': `Bearer ${this.token.access_token}`,
+                    'Content-Type': 'application/json'
+                }
+            })
+                .then((response) => response.json())
+                .then(data => {
+                    if (data.success) {
+                        post.is_favorited = !post.is_favorited;
+                        this.dispatchMessage("success", successMessage, 5000);
+                    } else {
+                        this.dispatchMessage("warning", errorMessage, 5000);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                    this.dispatchMessage("warning", error.message, 5000);
+                })
+                .finally(() => {
+                    this.isLoading = false;
+                    this.updateLocalStorageForTags();
+                });
         },
     };
 }
