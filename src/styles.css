@@ -16,3 +16,23 @@ input::-webkit-inner-spin-button {
 input[type=number] {
   -moz-appearance: textfield;
 }
+
+.notification {
+  @apply mb-2.5 mx-auto py-1.5 px-5 rounded-lg shadow-md font-semibold z-50 text-white;
+}
+
+.notification.info {
+  @apply bg-blue-600;
+}
+
+.notification.success {
+  @apply bg-green-600;
+}
+
+.notification.warning {
+  @apply bg-orange-600;
+}
+
+.notification.error {
+  @apply bg-red-600;
+}

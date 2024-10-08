@@ -1,10 +1,12 @@
 // Define the window.dispatchMessages function
 window.dispatchMessages = function (messages, timeout) {
+    const notificationContainer = document.getElementById('notification-container');
+
     messages.forEach(message => {
-        const notification = document.createElement('div');
+        const notification = document.createElement('span');
         notification.className = `notification ${message.type}`;
-        notification.innerText = `${message.type.toUpperCase()}: ${message.text}`;
-        document.body.appendChild(notification);
+        notification.innerText = `${message.text}`;
+        notificationContainer.appendChild(notification);
 
         if (timeout > 0) {
             setTimeout(() => {
@@ -14,11 +16,6 @@ window.dispatchMessages = function (messages, timeout) {
     });
 };
 
-// Define the dispatchMessage function
-function dispatchMessage(type, message, timeout) {
-    window.dispatchMessages([{ type: type, text: message }], timeout);
-}
-
 function initSankakuTools() {
     return {
         API_URL: "https://capi-v2.sankakucomplex.com",
@@ -26,6 +23,7 @@ function initSankakuTools() {
         TAG_WIKI_URL: "https://capi-v2.sankakucomplex.com/tag-and-wiki/name/",
         FOLLOWING_URL: "https://sankakuapi.com/users/followings?lang=en",
         TAG_SEARCH_AUTO_SUGGEST_CREATING_URL: "https://sankakuapi.com/tags/autosuggestCreating?lang=en&tag=",
+        TAG_POSTS_URL: "https://capi-v2.sankakucomplex.com/posts?lang=en",
         POST_FOLLOW_URL: "https://sankakuapi.com/posts/",
         isLoading: false,
         loginData: {
@@ -34,7 +32,7 @@ function initSankakuTools() {
         },
         initialized: false,
         token: {
-            type: '',
+            token_type: '',
             access_token: '',
             refresh_token: '',
             access_token_ttl: 0,  // Token time-to-live in seconds
@@ -56,6 +54,7 @@ function initSankakuTools() {
         selectedFetchFilter: "all",
         filteredTags: [],
         currentTag: null,
+        isShowingTagURL: false,
         currentSearchInputElement: null,
         currentSearchTag: null,
         searchTagSuggestions: [],
@@ -68,7 +67,7 @@ function initSankakuTools() {
         isShowingPosts: false, // Track if posts are being shown
 
         dispatchMessage(type, message, timeout) {
-            window.dispatchMessages([{ type: type, text: message }], timeout);
+            window.dispatchMessages([{type: type, text: message}], timeout);
         },
 
         // Check local storage on init
@@ -90,7 +89,7 @@ function initSankakuTools() {
 
             // check if last fetch was more than 5 minutes ago
             if (this.getLastFetchTime() > 300) {
-                this.dispatchMessage("warning", "Last fetch was more than 5 minutes ago. You should fetch following tags again.", 5000);
+                this.dispatchMessage("error", "Last fetch was more than 5 minutes ago. You should fetch following tags again.", 5000);
             }
         },
 
@@ -130,51 +129,40 @@ function initSankakuTools() {
         },
 
         getToken() {
-            this.isLoading = true;
-            fetch(this.LOGIN_URL, {
+            const url = this.LOGIN_URL;
+            const options = {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify(this.loginData)
-            })
-                .then(response => {
-                    if (response.redirected) {
-                        window.location.href = response.url;
-                    } else if (response.ok) {
-                        return response.json();
-                    } else {
-                        this.dispatchMessage("warning", "Invalid credentials or unknown error!", 5000);
-                        this.isLoading = false;
-                    }
-                })
+            };
+
+            this.isLoading = true;
+            fetch(url, options)
+                .then((response) => response.json())
                 .then(data => {
-                    this.isLoading = false;
                     if (data.success && data.token_type && data.access_token && data.refresh_token) {
                         // Store token information
-                        this.token.type = data.token_type;
-                        this.token.access_token = data.access_token;
-                        this.token.refresh_token = data.refresh_token;
-                        this.token.access_token_ttl = data.access_token_ttl;
-                        this.token.refresh_token_ttl = data.refresh_token_ttl;
-                        this.token.hasToken = true;
-
-                        // Calculate expiry dates
-                        const now = new Date();
-                        this.token.expiry_date = new Date(now.getTime() + this.token.access_token_ttl * 1000);
-                        this.token.refresh_expiry_date = new Date(now.getTime() + this.token.refresh_token_ttl * 1000);
+                        Object.assign(this.token, {
+                            token_type: data.token_type,
+                            access_token: data.access_token,
+                            refresh_token: data.refresh_token,
+                            access_token_ttl: data.access_token_ttl,
+                            refresh_token_ttl: data.refresh_token_ttl,
+                            hasToken: true,
+                            expiry_date: new Date(Date.now() + data.access_token_ttl * 1000),
+                            refresh_expiry_date: new Date(Date.now() + data.refresh_token_ttl * 1000)
+                        });
 
                         // Store token details in localStorage
                         localStorage.setItem('skkToken', JSON.stringify(this.token));
-
                         this.dispatchMessage("success", "Login successful! Tokens saved.", 3000);
                         this.checkTokenExpiry();
                     } else {
-                        this.dispatchMessage("warning", "Invalid credentials or unknown error!", 5000);
+                        this.dispatchMessage("error", "Invalid credentials or unknown error!", 5000);
                     }
                 })
-                .catch(error => {
-                    console.error('Error:', error);
-                    this.isLoading = false;
-                });
+                .catch(error => console.error('Error:', error))
+                .finally(() => this.isLoading = false);
         },
 
         checkTokenExpiry() {
@@ -183,20 +171,20 @@ function initSankakuTools() {
             if (this.token.expiry_date) {
                 const accessTokenExpiresIn = Math.round((this.token.expiry_date - now) / 1000);
                 if (accessTokenExpiresIn <= 0) {
-                    this.dispatchMessage("warning", "Access token has expired. Please log in again.", 5000);
+                    this.dispatchMessage("error", "Access token has expired. Please log in again.", 5000);
                     this.token.hasToken = false;
                 } else if (accessTokenExpiresIn <= 3600) {
-                    this.dispatchMessage("warning", `Access token will expire in ${Math.round(accessTokenExpiresIn / 60)} minutes.`, 5000);
+                    this.dispatchMessage("error", `Access token will expire in ${Math.round(accessTokenExpiresIn / 60)} minutes.`, 5000);
                 }
             }
 
             if (this.token.refresh_expiry_date) {
                 const refreshTokenExpiresIn = Math.round((this.token.refresh_expiry_date - now) / 1000);
                 if (refreshTokenExpiresIn <= 0) {
-                    this.dispatchMessage("warning", "Refresh token has expired. Please log in again.", 5000);
+                    this.dispatchMessage("error", "Refresh token has expired. Please log in again.", 5000);
                     this.token.hasToken = false;
                 } else if (refreshTokenExpiresIn <= 86400) {
-                    this.dispatchMessage("warning", `Refresh token will expire in ${Math.round(refreshTokenExpiresIn / 3600)} hours.`, 5000);
+                    this.dispatchMessage("error", `Refresh token will expire in ${Math.round(refreshTokenExpiresIn / 3600)} hours.`, 5000);
                 }
             }
         },
@@ -269,7 +257,7 @@ function initSankakuTools() {
 
         processFile() {
             if (!this.selectedFile) {
-                this.dispatchMessage("warning", "Please select a file!", 5000);
+                this.dispatchMessage("error", "Please select a file!", 5000);
                 return;
             }
 
@@ -286,7 +274,7 @@ function initSankakuTools() {
                     if (trimmedLine && !trimmedLine.startsWith('#') && !trimmedLine.startsWith('//')) {
                         const tagName = trimmedLine.toLowerCase();
                         if (!this.tags.some(tag => tag.tagName.toLowerCase() === tagName)) {
-                            this.tags.push({ tagName: tagName, fetched: false, following: false });
+                            this.tags.push({tagName: tagName, fetched: false, following: false});
                         }
                     }
                 });
@@ -302,12 +290,17 @@ function initSankakuTools() {
             this.isLoading = false;
         },
 
-        fetchTagWiki(tag, batchAction = false) {
-            // if (!batchAction && tag.fetched === true) {
-            //     this.dispatchMessage("warning", "Tag already fetched!", 5000);
-            //     return;
-            // }
+        getTagPostsUrl(tag) {
+            if (tag.fetched !== true) return null;
+            return tag.postsUrl || `https://www.sankakucomplex.com/?tags=${tag.tagName}`;
+        },
 
+        getTagWikiUrl(tag) {
+            if (tag.fetched !== true) return null;
+            return tag.wikiUrl || `https://www.sankakucomplex.com/tag?tagName=${tag.tagName}`;
+        },
+
+        fetchTagWiki(tag, batchAction = false) {
             if (batchAction && tag.fetched === true) {
                 return;
             }
@@ -319,16 +312,11 @@ function initSankakuTools() {
             fetch(this.TAG_WIKI_URL + tag.tagName, {
                 method: 'GET'
             })
-                .then(response => {
-                    if (response.ok) {
-                        return response.json()
-                    } else if (!batchAction) {
-                        throw new Error('Tag not found or something went wrong!');
-                    }
-                })
+                .then((response) => response.json())
                 .then(data => {
                     if (!batchAction && !data.tag && !data.wiki) {
-                        this.dispatchMessage("warning", "Unknown error!", 5000);
+                        console.error('Unexpected response data:', data);
+                        this.dispatchMessage("error", "Unexpected response data, check log for more details", 5000);
                         return;
                     }
 
@@ -342,13 +330,7 @@ function initSankakuTools() {
                     }
 
                     if (!batchAction) {
-                        // Update local storage
-                        this.updateLocalStorageForTags();
-
-                        // Check token expiry
-                        this.checkTokenExpiry();
                         this.dispatchMessage("success", "Tags fetching status updated!", 5000);
-                        this.isLoading = false;
                     }
                 })
                 .catch(error => {
@@ -358,226 +340,98 @@ function initSankakuTools() {
                     tag.fetched = null;
 
                     if (!batchAction) {
-                        // Update local storage
+                        this.dispatchMessage("error", error.message, 5000);
+                    }
+                })
+                .finally(() => {
+                    if (!batchAction) {
                         this.updateLocalStorageForTags();
-
-                        this.dispatchMessage("warning", error.message, 5000);
+                        this.checkTokenExpiry();
                         this.isLoading = false;
                     }
                 });
         },
 
         async refreshAllTags() {
-            // Ask if user wants to refresh all tags
             if (!confirm('Do you want to refresh all tags?')) {
                 return;
             }
 
-            this.isLoading = true; // Set loading state
             console.log('Refreshing all tags');
+            this.isLoading = true;
 
-            const batchSize = 10; // Process 10 tags at a time
-            let batchIndex = 0;
+            const batchSize = 10;
 
-            const processBatch = async () => {
-                // Get the current batch of tags
-                const batch = this.tags.slice(batchIndex, batchIndex + batchSize);
-                const fetchPromises = batch.map(tag => this.fetchTagWiki(tag, true));
+            try {
+                for (let i = 0; i < this.tags.length; i += batchSize) {
+                    const batch = this.tags.slice(i, i + batchSize);
+                    const fetchPromises = batch.map(tag => this.fetchTagWiki(tag, true));
+                    await Promise.all(fetchPromises);
 
-                // Wait for all fetches in the current batch to complete
-                await Promise.all(fetchPromises);
-                batchIndex += batchSize; // Move to the next batch
-
-                // If there are more tags, continue processing after a 2-second delay
-                if (batchIndex < this.tags.length) {
-                    setTimeout(processBatch, 5000); // Wait 2 seconds and process next batch
-                } else {
-                    this.isLoading = false; // Reset loading state
-                    return true;
+                    if (i + batchSize < this.tags.length) {
+                        await this.sleep(5000);
+                    }
                 }
-            };
 
-            // Start processing the first batch
-            await processBatch();
-            this.updateLocalStorageForTags();
+                this.dispatchMessage("success", "All tags refreshed successfully!", 5000);
+            } catch (error) {
+                console.error('Error in refreshing all tags:', error);
+                this.dispatchMessage("error", "Error refreshing tags. Please try again.", 5000);
+            } finally {
+                this.updateLocalStorageForTags();
+                this.isLoading = false;
+            }
         },
 
-        getTagPostsUrl(tag) {
-            if (tag.fetched !== true) return null;
-            return tag.postsUrl || `https://www.sankakucomplex.com/?tags=${tag.tagName}`;
-        },
+        async fetchFollowingTags() {
+            this.isLoading = true;
 
-        getTagWikiUrl(tag) {
-            if (tag.fetched !== true) return null;
-            return tag.wikiUrl || `https://www.sankakucomplex.com/tag?tagName=${tag.tagName}`;
-        },
-
-        fetchFollowingTags() {
-            this.refreshAllTags().then(() => {
-                this.isLoading = true;
-                fetch(this.FOLLOWING_URL, {
+            try {
+                const response = await fetch(this.FOLLOWING_URL, {
                     method: 'GET',
                     headers: {
                         'Authorization': `Bearer ${this.token.access_token}`,
                         'Content-Type': 'application/json'
                     }
-                })
-                    .then((response) => response.json())
-                    .then(data => {
-                        if (data.tags) {
-                            // for each tag in the response, check if it exists in this.tags and update following status, else add it fetch data
-                            data.tags.forEach(followingTag => {
-                                const foundTag = this.tags.find(tag => tag.id === followingTag.id);
-                                if (foundTag) {
-                                    foundTag.following = true; // Update following status
-                                } else {
-                                    const tag = { id: followingTag.id, tagName: followingTag.tagName, fetched: false, following: true };
-                                    this.tags.unshift(tag); // Add the tag to tags
-                                    this.fetchTagWiki(tag, true); // Fetch data
-                                }
-                            });
+                });
 
-                            // Update local storage
-                            this.lastFetchFollowingTagsTime = new Date();
-                            this.updateLocalStorageForTags();
+                if (!response.ok) {
+                    console.error('Network response was not ok');
+                    this.dispatchMessage("error", "Network response was not ok!", 5000);
+                }
 
-                            this.dispatchMessage("success", "Tags following status updated!", 5000);
+                const data = await response.json();
 
-                            // Check token expiry
-                            this.checkTokenExpiry();
+                if (data.tags) {
+                    data.tags.forEach(followingTag => {
+                        const foundTag = this.tags.find(tag => tag.id === followingTag.id);
+                        if (foundTag) {
+                            foundTag.following = true;
                         } else {
-                            this.dispatchMessage("warning", "No data or unknown error!", 5000);
+                            const newTag = {
+                                id: followingTag.id,
+                                tagName: followingTag.tagName,
+                                fetched: false,
+                                following: true
+                            };
+                            this.tags.unshift(newTag);
                         }
-                    })
-            }).catch(error => {
-                console.error('Error in refreshing tags:', error);
-                this.dispatchMessage("warning", "Some tags could not be refreshed.", 5000);
-            }).finally(() => {
+                    });
+
+                    this.dispatchMessage("success", "Tags following status updated!", 5000);
+                } else {
+                    console.error('Unexpected response data:', data);
+                    this.dispatchMessage("error", "Unexpected response data, check log for more details", 5000);
+                }
+            }  catch (error) {
+                console.error('Error in fetching following status:', error);
+                this.dispatchMessage("error", `Error fetching following status: ${error.message}`, 5000);
+            } finally {
+                await this.refreshAllTags();
+                this.lastFetchFollowingTagsTime = new Date();
+                this.updateLocalStorageForTags();
                 this.isLoading = false;
-            });
-        },
-
-        followTag(tag, batchAction = false) {
-            if (!batchAction && tag.following === true) {
-                this.dispatchMessage("warning", "Tag already followed, please refresh the status!", 5000);
-                return;
             }
-
-            if (batchAction && tag.following === true) {
-                return;
-            }
-
-            this.isLoading = true;
-            fetch(this.FOLLOWING_URL, {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${this.token.access_token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    'following_id': `${tag.id}`,
-                    'type': "tag"
-                })
-            })
-                .then(response => {
-                    if (response.ok) {
-                        return response.json()
-                    } else if (!batchAction) {
-                        throw new Error('Token expired or something went wrong!');
-                    }
-                })
-                .then(data => {
-                    if (data.id) {
-                        tag.following = true; // Set following to true
-
-                        if (!batchAction) {
-                            // Update local storage
-                            this.updateLocalStorageForTags();
-                            this.dispatchMessage("success", "Tag followed!", 5000);
-                            // Check token expiry
-                            this.checkTokenExpiry();
-                        }
-                    } else {
-                        if (!batchAction) {
-                            this.dispatchMessage("warning", "No data or unknown error!", 5000);
-                        } else {
-                            throw new Error('Error following tag: ' + tag.tagName);
-                        }
-                    }
-
-                    this.isLoading = false;
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    if (!batchAction) {
-                        this.dispatchMessage("warning", error.message, 5000);
-                    }
-
-                    this.isLoading = false;
-                });
-        },
-
-        unfollowTag(tag, batchAction = false) {
-            if (!batchAction && tag.following === false && !confirm('Confirm unfollow?')) {
-                return;
-            }
-
-            if (batchAction && tag.following === false) {
-                return;
-            }
-
-            this.isLoading = true;
-            fetch(this.FOLLOWING_URL, {
-                method: 'DELETE',
-                headers: {
-                    'Authorization': `Bearer ${this.token.access_token}`,
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    'following_id': `${tag.id}`,
-                    'type': "tag"
-                })
-            })
-                .then(response => {
-                    if (response.ok) {
-                        return response.json()
-                    } else if (!batchAction) {
-                        throw new Error('Token expired or something went wrong!');
-                    }
-                })
-                .then(data => {
-                    if (data.success === true) {
-                        // Update following status of the tag
-                        tag.following = false;
-
-                        // Add the tag to recentlyUnfollowedTags
-                        // push only if not exist
-                        if (!this.recentlyUnfollowedTags.find(followedTag => followedTag.id === tag.id)) {
-                            this.recentlyUnfollowedTags.push(tag);
-                        }
-
-                        if (!batchAction) {
-                            // Update local storage
-                            this.updateLocalStorageForTags();
-                            this.dispatchMessage("success", "Tag unfollowed successfully!", 5000);
-
-                            // Check token expiry
-                            this.checkTokenExpiry();
-                        }
-                    } else if (!batchAction) {
-                        this.dispatchMessage("warning", "No data or unknown error!", 5000);
-                    }
-
-                    this.isLoading = false;
-                })
-                .catch(error => {
-                    console.error('Error:', error);
-                    if (!batchAction) {
-                        this.dispatchMessage("warning", error.message, 5000);
-                    }
-
-                    this.isLoading = false;
-                });
         },
 
         removeTag(tag) {
@@ -620,133 +474,111 @@ function initSankakuTools() {
             console.log(this.selectedTags);
         },
 
-        followSelectedTags() {
-            if (this.selectedTags.length === 0) {
-                this.dispatchMessage("warning", "No tags selected!", 5000);
+        async handleFollowTag(tag, isToFollow) {
+            const options = {
+                method: isToFollow ? 'POST' : 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${this.token.access_token}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    'following_id': tag.id,
+                    'type': "tag"
+                })
+            };
+
+            try {
+                const response = await fetch(this.FOLLOWING_URL, options);
+
+                if (!response.ok) {
+                    return Promise.reject(response);
+                }
+
+                const data = await response.json();
+
+                if (data.id || data.success) {
+                    tag.following = isToFollow;
+                    return Promise.resolve(true);
+                } else {
+                    console.error('Unexpected response for tag:', tag.tagName);
+                    return Promise.reject(response);
+                }
+            } catch (error) {
+                console.error('Error when following tag:', tag.tagName);
+                return Promise.reject(error);
+            }
+        },
+
+        async handleFollowSelectedTags(isToFollow = true, singleTag = null) {
+            let tagsToProcess = [...this.selectedTags];
+            if (singleTag !== null) {
+                tagsToProcess = [];
+                tagsToProcess.push(singleTag);
+            }
+
+            if (tagsToProcess.length === 0) {
+                this.dispatchMessage("error", "No tags selected!", 5000);
+                return;
+            }
+
+            // check if last fetch was more than 5 minutes ago
+            if (this.getLastFetchTime() > 300) {
+                this.dispatchMessage("error", "Last fetch was more than 5 minutes ago. Fetch following status first!", 5000);
+                return;
+            }
+
+            if (isToFollow) {
+                tagsToProcess = tagsToProcess.filter(tag => !tag.following);
+            }else {
+                tagsToProcess = tagsToProcess.filter(tag => tag.following);
+            }
+
+            if (tagsToProcess.length === 0) {
+                this.dispatchMessage("error", isToFollow ? "All selected tags are already followed!" : "All selected tags are not followed!", 5000);
                 return;
             }
 
             // Ask if user wants to follow all tags
-            if (!confirm('Do you want to follow selected tags?')) {
+            if (tagsToProcess.length > 1 && !confirm('Proceed with selected tags?')) {
                 return;
             }
 
-            // check if last fetch was more than 5 minutes ago
-            if (this.getLastFetchTime() > 300) {
-                if (!confirm('Last fetch was more than 5 minutes ago. Do you want to fetch following status first?')) {
-                    return;
-                }
-                this.fetchFollowingTags();
-                return;
-            }
+            console.log('tagsToProcess', tagsToProcess);
 
             this.isLoading = true;
-            console.log('Following all tags');
+            console.log('Processing selected tag(s)');
 
-            const batchSize = 2;
-            let batchIndex = 0;
+            const batchSize = 3;
+            let successCount = 0;
+            let failCount = 0;
 
-            const processBatch = () => {
-                const batch = this.selectedTags.slice(batchIndex, batchIndex + batchSize);
-                const followPromises = batch.map(tag => this.followTag(tag, true));
+            try {
+                for (let i = 0; i < tagsToProcess.length; i += batchSize) {
+                    const batch = tagsToProcess.slice(i, i + batchSize);
+                    const results = await Promise.allSettled(batch.map(tag => this.handleFollowTag(tag, isToFollow)));
 
-                // Wait for all follows in the current batch to complete
-                Promise.all(followPromises)
-                    .then(() => {
-                        batchIndex += batchSize; // Move to the next batch
-
-                        // If there are more tags, continue processing
-                        if (batchIndex < this.selectedTags.length) {
-                            setTimeout(processBatch, 2000); // Wait 2 seconds and process next batch
+                    results.forEach(result => {
+                        if (result.status === 'fulfilled') {
+                            successCount++;
                         } else {
-                            this.isLoading = false; // Reset loading state
-                            this.dispatchMessage("success", "All selected tags followed!", 5000);
+                            failCount++;
                         }
-                    })
-                    .catch(error => {
-                        console.error('Error in following tags:', error);
-                        this.dispatchMessage("warning", "Some tags could not be followed.", 5000);
-                        this.isLoading = false; // Reset loading state
                     });
-                Promise.all(followPromises)
-                    .then(() => {
-                        batchIndex += batchSize; // Move to the next batch
 
-                        // If there are more tags, continue processing after a 2-second delay
-                        if (batchIndex < this.selectedTags.length) {
-                            setTimeout(processBatch, 2000); // Wait 2 seconds and process next batch
-                        } else {
-                            this.isLoading = false; // Reset loading state
-                            this.dispatchMessage("success", "All selected tags followed!", 5000);
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error in following tags:', error);
-                        this.dispatchMessage("warning", "Some tags could not be followed.", 5000);
-                        this.isLoading = false; // Reset loading state
-                    });
-            };
-
-            // Start processing the first batch
-            processBatch();
-
-            this.updateLocalStorageForTags();
-        },
-
-        unFollowSelectedTags() {
-            if (this.selectedTags.length === 0) {
-                this.dispatchMessage("warning", "No tags selected!", 5000);
-                return;
-            }
-
-            // Ask if user wants to unfollow all tags
-            if (!confirm('Do you want to unfollow selected tags?')) {
-                return;
-            }
-
-            // check if last fetch was more than 5 minutes ago
-            if (this.getLastFetchTime() > 300) {
-                if (!confirm('Last fetch was more than 5 minutes ago. Do you want to fetch following status first?')) {
-                    return;
+                    if (i + batchSize < tagsToProcess.length) {
+                        await this.sleep(5000); // Wait 5 seconds before processing the next batch
+                    }
                 }
-                this.fetchFollowingTags();
-                return;
+
+                this.dispatchMessage("success", `Processed ${successCount} tags. Failed to process ${failCount} tags.`, 5000);
+                return {successCount, failCount};
+            } catch (error) {
+                console.error('Error while following tags:', error);
+                this.dispatchMessage("error", "Unknown error. Check log for more details", 5000);
+            } finally {
+                this.updateLocalStorageForTags();
+                this.isLoading = false;
             }
-
-            this.isLoading = true;
-            console.log('Unfollowing all tags');
-
-            const batchSize = 2;
-            let batchIndex = 0;
-
-            const processBatch = () => {
-                const batch = this.selectedTags.slice(batchIndex, batchIndex + batchSize);
-                const unfollowPromises = batch.map(tag => this.unfollowTag(tag, true));
-
-                // Wait for all unfollows in the current batch to complete
-                Promise.all(unfollowPromises)
-                    .then(() => {
-                        batchIndex += batchSize; // Move to the next batch
-
-                        // If there are more tags, continue processing after a 2-second delay
-                        if (batchIndex < this.selectedTags.length) {
-                            setTimeout(processBatch, 2000); // Wait 2 seconds and process next batch
-                        } else {
-                            this.isLoading = false; // Reset loading state
-                            this.dispatchMessage("success", "All tags unfollowed!", 5000);
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error in unfollowing tags:', error);
-                        this.dispatchMessage("warning", "Some tags could not be unfollowed.", 5000);
-                        this.isLoading = false; // Reset loading state
-                    });
-            };
-
-            // Start processing the first batch
-            processBatch();
-
-            this.updateLocalStorageForTags();
         },
 
         getLastFetchTime() {
@@ -809,15 +641,22 @@ function initSankakuTools() {
 
             // Convert the modified tags array to JSON
             const tagsJson = JSON.stringify(data, null, 2); // Formatting for readability
-            const blob = new Blob([tagsJson], { type: 'application/json' });
+            const blob = new Blob([tagsJson], {type: 'application/json'});
+
+            // Create a URL for the blob
+            const url = URL.createObjectURL(blob);
 
             // Open a new tab and display the JSON data with URLs
             const newTab = window.open();
-            newTab.document.write(`<pre>${tagsJson}</pre>`); // Display JSON in a readable format
-            newTab.document.close();
+            if (newTab) {
+                newTab.document.write(`<pre>${tagsJson}</pre>`); // Display JSON in a readable format
+                newTab.document.close();
+            } else {
+                this.dispatchMessage("error", "Failed to open a new tab. Please check your browser settings.", 5000);
+            }
 
             // Optionally revoke the blob URL to free memory (after it's used)
-            URL.revokeObjectURL(newTab);
+            URL.revokeObjectURL(url);
         },
 
         directDownloadTagsJson() {
@@ -832,7 +671,7 @@ function initSankakuTools() {
             const jsonContent = JSON.stringify(data, null, 2);
 
             // Create a Blob from the JSON data
-            const blob = new Blob([jsonContent], { type: "application/json" });
+            const blob = new Blob([jsonContent], {type: "application/json"});
 
             // Create a download link and trigger it
             const url = URL.createObjectURL(blob);
@@ -889,7 +728,7 @@ function initSankakuTools() {
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    this.dispatchMessage("warning", error.message, 5000);
+                    this.dispatchMessage("error", error.message, 5000);
                     this.searchTagSuggestions = [];
                     this.searchTagSuggestionsFetched = false;
                 });
@@ -933,24 +772,22 @@ function initSankakuTools() {
                 this.currentTag = tag;
                 const tagUrlsContainer = this.$refs.tagUrlsContainer;
 
-                // Remove the container from the previous parent (if any)
-                if (tagUrlsContainer.parentNode) {
-                    tagUrlsContainer.parentNode.removeChild(tagUrlsContainer);
-                }
-
                 // Append the container to the closest div
                 closestDiv.appendChild(tagUrlsContainer);
 
                 // Position it correctly relative to the input element
                 tagUrlsContainer.classList.remove('hidden');
+                tagUrlsContainer.classList.add('grid');
                 tagUrlsContainer.style.position = 'absolute';
                 tagUrlsContainer.style.bottom = `${$el.offsetTop + $el.offsetHeight + 5}px`;
                 tagUrlsContainer.style.left = `${$el.offsetLeft}px`;
                 tagUrlsContainer.style.width = `max-content`;
 
+                this.isShowingTagURL = true;
+
                 // Get the url elements
-                const wikiUrlEl = this.$refs.tagWikiUrlEl;
-                const postsUrlEl = this.$refs.tagPostsUrlEl;
+                // const wikiUrlEl = this.$refs.tagWikiUrlEl;
+                // const postsUrlEl = this.$refs.tagPostsUrlEl;
 
                 // wikiUrlEl.href = this.getTagWikiUrl(tag);
                 // postsUrlEl.href = this.getTagPostsUrl(tag);
@@ -958,8 +795,12 @@ function initSankakuTools() {
         },
 
         hideTagsUrl() {
+            if (!this.isShowingTagURL) return;
+
             const tagUrlsContainer = this.$refs.tagUrlsContainer;
+            tagUrlsContainer.classList.remove('grid');
             tagUrlsContainer.classList.add('hidden');
+            this.isShowingTagURL = false;
         },
 
         applySuggestion(suggestion) {
@@ -971,12 +812,12 @@ function initSankakuTools() {
             } else {
                 // Global search
                 if (this.tags.some(tag => tag.tagName === suggestion.tagName)) {
-                    this.dispatchMessage("warning", "Tag already exists!", 5000);
+                    this.dispatchMessage("error", "Tag already exists!", 5000);
                     return;
                 }
 
                 this.currentSearchInputElement.value = suggestion.tagName;
-                const newTag = { tagName: suggestion.tagName, fetched: false, following: false };
+                const newTag = {tagName: suggestion.tagName, fetched: false, following: false};
                 this.tags.unshift(newTag);
                 this.fetchTagWiki(newTag);
             }
@@ -991,8 +832,6 @@ function initSankakuTools() {
             }
             return value; // Return the original number if less than 1000
         },
-
-        TAG_POSTS_URL: "https://capi-v2.sankakucomplex.com/posts?lang=en",
 
         // Helper function to add a delay
         sleep(ms) {
@@ -1039,7 +878,7 @@ function initSankakuTools() {
         // Computed property for paginated posts
         get paginatedPosts() {
             const start = (this.currentPage - 1) * this.postsPerPage;
-            const end = start + this.postsPerPage * 1; // Make sure the end is a number
+            const end = start + this.postsPerPage;
             // console.log(start, end);
             return this.postsToShow.slice(start, end);
         },
@@ -1109,7 +948,7 @@ function initSankakuTools() {
                     const data = await response.json();
                     return data.map(post => this.extractPostData(post)); // Only extract relevant data
                 } else {
-                    throw new Error('Failed to fetch page data');
+                    console.error('Failed to fetch page data');
                 }
             } catch (error) {
                 console.error('Error fetching page data:', error);
@@ -1125,14 +964,19 @@ function initSankakuTools() {
 
             // If no posts are available for the tag, exit early
             if (realPostCount === 0) {
-                this.dispatchMessage("warning", "No posts available for this tag!", 5000);
+                this.dispatchMessage("error", "No posts available for this tag!", 5000);
                 return;
             }
 
             let needToFetch = false;
 
             const existingPostsDataIndex = this.fetchedPostsData.findIndex(data => data.tagName === tag.tagName);
-            const fetchedData = this.fetchedPostsData[existingPostsDataIndex] || { fetchedPosts: [], lastPostFetchedTime: 0, fetchedPostCount: 0, tagName: tag.tagName };
+            const fetchedData = this.fetchedPostsData[existingPostsDataIndex] || {
+                fetchedPosts: [],
+                lastPostFetchedTime: 0,
+                fetchedPostCount: 0,
+                tagName: tag.tagName
+            };
 
             const fetchedPostCount = fetchedData.fetchedPostCount || 0;
             const lastPostFetchedTime = fetchedData.lastPostFetchedTime || 0;
@@ -1178,18 +1022,22 @@ function initSankakuTools() {
                 // tag.fetchedPosts = fetchedPosts.filter(post => post.rating === 's');
 
                 const lastPostFetchedTime = new Date().getTime();
-                const postsDataToUpdate = { fetchedPosts, fetchedPostCount: fetchedPosts.length, lastPostFetchedTime };
+                const postsDataToUpdate = {fetchedPosts, fetchedPostCount: fetchedPosts.length, lastPostFetchedTime};
 
                 if (existingPostsDataIndex !== -1) {
                     // Update the existing post
-                    this.fetchedPostsData[existingPostsDataIndex] = { ...this.fetchedPostsData[existingPostsDataIndex], ...postsDataToUpdate };
+                    this.fetchedPostsData[existingPostsDataIndex] = {...this.fetchedPostsData[existingPostsDataIndex], ...postsDataToUpdate};
                 } else {
                     // Add a new post
-                    this.fetchedPostsData.push({ tagName: tag.tagName, ...postsDataToUpdate });
+                    this.fetchedPostsData.push({tagName: tag.tagName, ...postsDataToUpdate});
                 }
 
                 // Store the number of fetched posts and update fetched time
-                this.tags = this.tags.map(t => t.tagName === tag.tagName ? { ...t, fetchedPostCount: fetchedPosts.length, lastPostFetchedTime } : t);
+                this.tags = this.tags.map(t => t.tagName === tag.tagName ? {
+                    ...t,
+                    fetchedPostCount: fetchedPosts.length,
+                    lastPostFetchedTime
+                } : t);
 
                 // Once posts are fetched
                 this.selectedTagToShowPosts = tag;
@@ -1201,7 +1049,7 @@ function initSankakuTools() {
                 this.isShowingPosts = true; // Show the posts
             } catch (error) {
                 console.error('Error fetching posts:', error);
-                this.dispatchMessage("warning", error.message, 5000);
+                this.dispatchMessage("error", error.message, 5000);
             } finally {
                 // Set loading state to false after all requests or an error
                 this.isFetchingPosts = false;
@@ -1210,9 +1058,9 @@ function initSankakuTools() {
         },
 
         handleFollowPost(post) {
-            const { method, successMessage, errorMessage } = post.is_favorited
-                ? { method: 'DELETE', successMessage: 'Post unfollowed!', errorMessage: 'Error unfollowing post!' }
-                : { method: 'POST', successMessage: 'Post followed!', errorMessage: 'Error following post!' };
+            const {method, successMessage, errorMessage} = post.is_favorited
+                ? {method: 'DELETE', successMessage: 'Post unfollowed!', errorMessage: 'Error unfollowing post!'}
+                : {method: 'POST', successMessage: 'Post followed!', errorMessage: 'Error following post!'};
 
             this.isLoading = true;
             fetch(this.POST_FOLLOW_URL + post.id + '/favorite?lang=en', {
@@ -1228,12 +1076,12 @@ function initSankakuTools() {
                         post.is_favorited = !post.is_favorited;
                         this.dispatchMessage("success", successMessage, 5000);
                     } else {
-                        this.dispatchMessage("warning", errorMessage, 5000);
+                        this.dispatchMessage("error", errorMessage, 5000);
                     }
                 })
                 .catch(error => {
                     console.error('Error:', error);
-                    this.dispatchMessage("warning", error.message, 5000);
+                    this.dispatchMessage("error", error.message, 5000);
                 })
                 .finally(() => {
                     this.isLoading = false;
