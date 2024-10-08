@@ -1,17 +1,19 @@
-// Define the window.dispatchMessages function
 window.dispatchMessages = function (messages, timeout) {
-    const notificationContainer = document.getElementById('notification-container');
+    const container = document.getElementById('notification-container');
 
-    messages.forEach(message => {
-        const notification = document.createElement('span');
-        notification.className = `notification ${message.type}`;
-        notification.innerText = `${message.text}`;
-        notificationContainer.appendChild(notification);
+    messages.forEach(({type, text}) => {
+        const notification = document.createElement('div');
+        const inner = document.createElement('span');
+        notification.className = 'w-full flex justify-center';
+        inner.className = `notification ${type}`;
+        inner.innerText = text;
+        notification.appendChild(inner);
+        container.appendChild(notification);
+
+        notification.addEventListener('click', () => notification.remove());
 
         if (timeout > 0) {
-            setTimeout(() => {
-                notification.remove();
-            }, timeout);
+            setTimeout(() => notification && notification.remove(), timeout);
         }
     });
 };
@@ -423,7 +425,7 @@ function initSankakuTools() {
                     console.error('Unexpected response data:', data);
                     this.dispatchMessage("error", "Unexpected response data, check log for more details", 5000);
                 }
-            }  catch (error) {
+            } catch (error) {
                 console.error('Error in fetching following status:', error);
                 this.dispatchMessage("error", `Error fetching following status: ${error.message}`, 5000);
             } finally {
@@ -529,7 +531,7 @@ function initSankakuTools() {
 
             if (isToFollow) {
                 tagsToProcess = tagsToProcess.filter(tag => !tag.following);
-            }else {
+            } else {
                 tagsToProcess = tagsToProcess.filter(tag => tag.following);
             }
 
@@ -712,9 +714,7 @@ function initSankakuTools() {
 
             console.log('Fetching suggestions for: ', term);
 
-            fetch(this.TAG_SEARCH_AUTO_SUGGEST_CREATING_URL + inputElement.value, {
-                method: 'GET'
-            })
+            fetch(this.TAG_SEARCH_AUTO_SUGGEST_CREATING_URL + inputElement.value, {method: 'GET'})
                 .then(response => response.json())
                 .then(data => {
                     if (data.length > 0) {
@@ -1088,5 +1088,31 @@ function initSankakuTools() {
                     this.updateLocalStorageForTags();
                 });
         },
+
+        async testFetchImage() {
+            const response = fetch(
+                'https://s.sankakucomplex.com/data/preview/e9/26/e926fafca996949c219289973816a3fa.jpg?e=1728404425&m=qrE52cHY65sme7iAHr_NBg',
+                {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${this.token.access_token}`,
+                        'Content-Type': 'application/json'
+                    }
+                }
+            );
+
+            if (!response.ok) {
+                return Promise.reject((await response).statusText);
+            }
+
+            const blob = await response.blob(); // Get image as blob
+            const reader = new FileReader(); // Create FileReader to read the blob
+
+            reader.onloadend = function() {
+                const base64data = reader.result; // Get the Base64 data
+                console.log('Base64 data:', base64data);
+                return true;
+            };
+        }
     };
 }

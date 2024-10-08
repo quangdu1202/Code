@@ -11,7 +11,7 @@
 </head>
 
 <body class="flex items-center justify-center">
-<div class="flex w-full flex-col items-center justify-center rounded-lg border bg-white shadow-lg"
+<div class="flex min-h-screen w-full flex-col items-center justify-center rounded-lg border bg-white shadow-lg"
      x-data="initSankakuTools()"
      x-init="init()">
     <div class="fixed inset-0 z-50 flex h-full w-full items-center justify-center bg-gray-800 bg-opacity-50"
@@ -100,6 +100,10 @@
                         </button>
                     </div>
                 </form>
+
+                <button @click="testFetchImage().catch(console.error)">
+                    Test
+                </button>
 
                 <!--Main data-->
                 <div class="my-8">
@@ -435,7 +439,7 @@
                     <!-- Posts Per Page Selection -->
                     <div class="mb-4">
                         <label class="mr-2" for="postsPerPage">Posts per page:</label>
-                        <select @change="updateTotalPages" class="rounded border px-2 py-1" id="postsPerPage"
+                        <select @change="updateTotalPages()" class="rounded border px-2 py-1" id="postsPerPage"
                                 x-model="postsPerPage">
                             <option value="10">10</option>
                             <option selected value="20">20</option>
@@ -586,7 +590,7 @@
                 <path d="M14 14V2L16 2V14H14Z" fill="#000000"/>
             </svg>
         </a>
-        <button @click="fetchAllPostsOfTag(currentTag)"
+        <button @click="fetchAllPostsOfTag(currentTag).catch(console.error)"
                 class="relative flex items-center justify-between px-4 py-2 hover:bg-gray-100"
                 x-ref="tagPostsUrlEl">
             Posts
@@ -599,7 +603,7 @@
         </button>
     </div>
 </div>
-    <div id="notification-container" class="fixed bottom-2.5 text-center">
+    <div id="notification-container" class="fixed flex w-full flex-wrap gap-2 bottom-2.5">
 
     </div>
 </body>
