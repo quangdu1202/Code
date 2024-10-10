@@ -27,6 +27,7 @@ function initSankakuTools() {
         TAG_SEARCH_AUTO_SUGGEST_CREATING_URL: "https://sankakuapi.com/tags/autosuggestCreating?lang=en&tag=",
         TAG_POSTS_URL: "https://capi-v2.sankakucomplex.com/posts?lang=en",
         POST_FOLLOW_URL: "https://sankakuapi.com/posts/",
+        PROXY_HOST: "http://localhost:8000/sig/", // TODO
         isLoading: false,
         loginData: {
             login: '',
@@ -354,6 +355,46 @@ function initSankakuTools() {
                 });
         },
 
+        removeTag(tag) {
+            // if (tag.following === true) {
+            //     this.unfollowTag(tag);
+            // }
+            this.isLoading = true;
+            this.tags = this.tags.filter(t => t.tagName !== tag.tagName);
+            this.filteredTags = this.filteredTags.filter(t => t.tagName !== tag.tagName);
+            this.recentlyUnfollowedTags.push(tag);
+
+            // Update local storage
+            this.updateLocalStorageForTags();
+
+            this.dispatchMessage("success", "Tag removed!", 5000);
+            this.isLoading = false;
+        },
+
+        selectTag(tag) {
+            tag.selected = !tag.selected
+
+            if (tag.selected === true) {
+                this.selectedTags.push(tag);
+            } else {
+                this.selectedTags = this.selectedTags.filter(selectedTag => selectedTag.id !== tag.id);
+            }
+        },
+
+        selectAll() {
+            this.selectedAll = !this.selectedAll;
+
+            this.filteredTags.forEach(tag => {
+                if (tag.fetched) {
+                    tag.selected = this.selectedAll;
+                }
+            });
+
+            this.selectedTags = this.selectedAll ? this.filteredTags.filter(tag => tag.selected) : [];
+
+            console.log(this.selectedTags);
+        },
+
         async refreshAllTags() {
             if (!confirm('Do you want to refresh all tags?')) {
                 return;
@@ -436,46 +477,6 @@ function initSankakuTools() {
             }
         },
 
-        removeTag(tag) {
-            // if (tag.following === true) {
-            //     this.unfollowTag(tag);
-            // }
-            this.isLoading = true;
-            this.tags = this.tags.filter(t => t.tagName !== tag.tagName);
-            this.filteredTags = this.filteredTags.filter(t => t.tagName !== tag.tagName);
-            this.recentlyUnfollowedTags.push(tag);
-
-            // Update local storage
-            this.updateLocalStorageForTags();
-
-            this.dispatchMessage("success", "Tag removed!", 5000);
-            this.isLoading = false;
-        },
-
-        selectTag(tag) {
-            tag.selected = !tag.selected
-
-            if (tag.selected === true) {
-                this.selectedTags.push(tag);
-            } else {
-                this.selectedTags = this.selectedTags.filter(selectedTag => selectedTag.id !== tag.id);
-            }
-        },
-
-        selectAll() {
-            this.selectedAll = !this.selectedAll;
-
-            this.filteredTags.forEach(tag => {
-                if (tag.fetched) {
-                    tag.selected = this.selectedAll;
-                }
-            });
-
-            this.selectedTags = this.selectedAll ? this.filteredTags.filter(tag => tag.selected) : [];
-
-            console.log(this.selectedTags);
-        },
-
         async handleFollowTag(tag, isToFollow) {
             const options = {
                 method: isToFollow ? 'POST' : 'DELETE',
@@ -493,7 +494,7 @@ function initSankakuTools() {
                 const response = await fetch(this.FOLLOWING_URL, options);
 
                 if (!response.ok) {
-                    return Promise.reject(response);
+                    return Promise.reject((await response).statusText);
                 }
 
                 const data = await response.json();
@@ -503,7 +504,7 @@ function initSankakuTools() {
                     return Promise.resolve(true);
                 } else {
                     console.error('Unexpected response for tag:', tag.tagName);
-                    return Promise.reject(response);
+                    return Promise.reject((await response).statusText);
                 }
             } catch (error) {
                 console.error('Error when following tag:', tag.tagName);
@@ -804,7 +805,7 @@ function initSankakuTools() {
         },
 
         applySuggestion(suggestion) {
-            tag = this.currentSearchTag;
+            let tag = this.currentSearchTag;
             if (tag) {
                 tag.tagName = suggestion.tagName;
                 tag.fetched = false;
@@ -853,7 +854,8 @@ function initSankakuTools() {
                 source: post.source,
                 status: post.status,
                 video_duration: post.video_duration,
-                width: post.width
+                width: post.width,
+                base64EncodedReviewImage: null
             };
         },
 
@@ -946,13 +948,15 @@ function initSankakuTools() {
 
                 if (response.ok) {
                     const data = await response.json();
-                    return data.map(post => this.extractPostData(post)); // Only extract relevant data
+                    return Promise.all(data.map(async post => ({
+                        ...this.extractPostData(post),
+                        base64EncodedReviewImage: post.file_type === 'image/png' ? await this.fetchImageBase64Encoded(post.preview_url) : post.preview_url
+                    }))); // Only extract relevant data
                 } else {
-                    console.error('Failed to fetch page data');
-                }
+                    throw new Error(`Failed to fetch page data: ${response.status} - ${response.statusText}`);                }
             } catch (error) {
                 console.error('Error fetching page data:', error);
-                return [];
+                throw error;
             }
         },
 
@@ -1041,7 +1045,6 @@ function initSankakuTools() {
 
                 // Once posts are fetched
                 this.selectedTagToShowPosts = tag;
-                this.postsToShow = fetchedPosts;
                 this.updateTotalPages();
                 this.updateLocalStorageForTags();
 
@@ -1057,7 +1060,37 @@ function initSankakuTools() {
             }
         },
 
-        handleFollowPost(post) {
+        async fetchImageBase64Encoded(url) {
+            try {
+                const base64EncodedURL = btoa(url);
+                const response = fetch(this.PROXY_HOST + base64EncodedURL,
+                    {
+                        method: 'GET',
+                        mode: 'cors'
+                    }
+                );
+
+                if (!response.ok) {
+                    return Promise.reject((await response).statusText);
+                }
+
+                const blob = await response.blob(); // Get image as blob
+                const reader = new FileReader(); // Create FileReader to read the blob
+
+                return new Promise((resolve, reject) => {
+                    reader.onload = () => {
+                        resolve(reader.result.split(',')[1]);
+                    };
+                    reader.onerror = reject;
+                    reader.readAsDataURL(blob);
+                });
+            } catch (error) {
+                console.error('Error fetching image:', error);
+                return null;
+            }
+        },
+
+        handleLikePost(post) {
             const {method, successMessage, errorMessage} = post.is_favorited
                 ? {method: 'DELETE', successMessage: 'Post unfollowed!', errorMessage: 'Error unfollowing post!'}
                 : {method: 'POST', successMessage: 'Post followed!', errorMessage: 'Error following post!'};
@@ -1087,32 +1120,6 @@ function initSankakuTools() {
                     this.isLoading = false;
                     this.updateLocalStorageForTags();
                 });
-        },
-
-        async testFetchImage() {
-            const response = fetch(
-                'https://s.sankakucomplex.com/data/preview/e9/26/e926fafca996949c219289973816a3fa.jpg?e=1728404425&m=qrE52cHY65sme7iAHr_NBg',
-                {
-                    method: 'GET',
-                    headers: {
-                        'Authorization': `Bearer ${this.token.access_token}`,
-                        'Content-Type': 'application/json'
-                    }
-                }
-            );
-
-            if (!response.ok) {
-                return Promise.reject((await response).statusText);
-            }
-
-            const blob = await response.blob(); // Get image as blob
-            const reader = new FileReader(); // Create FileReader to read the blob
-
-            reader.onloadend = function() {
-                const base64data = reader.result; // Get the Base64 data
-                console.log('Base64 data:', base64data);
-                return true;
-            };
         }
     };
 }

@@ -455,7 +455,7 @@
                             <div class="relative mb-4 transform overflow-hidden rounded shadow-lg transition-transform duration-300 ease-in-out group hover:scale-105">
 
                                 <!-- Image -->
-                                <img :src="post.preview_url" alt="Post Preview"
+                                <img :src="post.base64EncodedReviewImage" alt="Post Preview"
                                      class="h-auto w-full rounded object-cover"
                                      loading="lazy" src=""/>
 
@@ -467,7 +467,7 @@
                                 </button>
 
                                 <!-- Like button -->
-                                <button @click="handleFollowPost(post)"
+                                <button @click="handleLikePost(post)"
                                         class="right-2 bottom-2 z-20 absolute flex justify-center items-center bg-white opacity-0 group-hover:opacity-70 hover:!opacity-100 hover:scale-105 shadow-lg rounded-full w-8 h-8 transition-all duration-300">
                                     <svg :class="post.is_favorited ? 'text-red-500' : 'text-white'" fill="currentColor"
                                          height="24px"
@@ -603,9 +603,9 @@
         </button>
     </div>
 </div>
-    <div id="notification-container" class="fixed flex w-full flex-wrap gap-2 bottom-2.5">
+<div class="fixed flex w-full flex-wrap gap-2 bottom-2.5" id="notification-container">
 
-    </div>
+</div>
 </body>
 
 </html>
