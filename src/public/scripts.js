@@ -68,6 +68,7 @@ function initSankakuTools() {
         selectedTagToShowPosts: {}, // Selected tag with posts
         isFetchingPosts: false, // Track if posts are being fetched
         isShowingPosts: false, // Track if posts are being shown
+        supportedImageTypes: ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp'],
 
         dispatchMessage(type, message, timeout) {
             window.dispatchMessages([{type: type, text: message}], timeout);
@@ -933,6 +934,14 @@ function initSankakuTools() {
             }
         },
 
+        async completePostBase64Src(file_type, preview_url) {
+            if (this.supportedImageTypes.includes(file_type)) {
+                return 'data:' + file_type + ';base64,' + await this.fetchImageBase64Encoded(preview_url);
+            } else {
+                return null;
+            }
+        },
+
         // Fetch posts of a specific page
         async fetchPostsOfPage(tag, limit, page) {
             const url = `${this.TAG_POSTS_URL}&tags=${tag.tagName}&limit=${limit}&page=${page}`;
@@ -950,10 +959,11 @@ function initSankakuTools() {
                     const data = await response.json();
                     return Promise.all(data.map(async post => ({
                         ...this.extractPostData(post),
-                        base64EncodedReviewImage: post.file_type === 'image/png' ? await this.fetchImageBase64Encoded(post.preview_url) : post.preview_url
+                        base64EncodedReviewImage: this.completePostBase64Src(post.file_type, post.preview_url)
                     }))); // Only extract relevant data
                 } else {
-                    throw new Error(`Failed to fetch page data: ${response.status} - ${response.statusText}`);                }
+                    throw new Error(`Failed to fetch page data: ${response.status} - ${response.statusText}`);
+                }
             } catch (error) {
                 console.error('Error fetching page data:', error);
                 throw error;
@@ -1063,16 +1073,12 @@ function initSankakuTools() {
         async fetchImageBase64Encoded(url) {
             try {
                 const base64EncodedURL = btoa(url);
-                const response = fetch(this.PROXY_HOST + base64EncodedURL,
+                const response = await fetch(this.PROXY_HOST + base64EncodedURL,
                     {
                         method: 'GET',
                         mode: 'cors'
                     }
                 );
-
-                if (!response.ok) {
-                    return Promise.reject((await response).statusText);
-                }
 
                 const blob = await response.blob(); // Get image as blob
                 const reader = new FileReader(); // Create FileReader to read the blob
@@ -1081,7 +1087,10 @@ function initSankakuTools() {
                     reader.onload = () => {
                         resolve(reader.result.split(',')[1]);
                     };
-                    reader.onerror = reject;
+                    reader.onerror = () => {
+                        reject(new Error('Error reading the image file.'));
+                    };
+
                     reader.readAsDataURL(blob);
                 });
             } catch (error) {
